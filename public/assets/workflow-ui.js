@@ -1,0 +1,54 @@
+'use strict';
+function initializeWorkflow(){
+  $('workspace-view').insertAdjacentHTML('afterbegin',`<article class="panel workflow-panel" id="workflow-panel"><nav class="workflow-steps" aria-label="航次决策步骤"><button data-workflow-target="workflow-panel">01 选择船舶</button><button data-workflow-target="arrival-fields">02 设置到港要求</button><button data-workflow-target="strategy-panel">03 比较方案</button><button data-workflow-target="environment-panel">04 改变环境</button><button data-workflow-target="workflow-recommendation">05 查看推荐变化</button></nav><div class="workflow-grid"><section><h2>01 / 选择船舶</h2><div class="workflow-fields"><label>船型<select id="ship-type">${Object.entries(VoyageWorkflow.ships).map(([id,s])=>'<option value="'+id+'">'+s.name+'</option>').join('')}</select></label><label>载重率（%）<input id="ship-load" type="number" min="10" max="100" step="1" value="100" required></label></div><p class="workflow-note" id="ship-profile-note"></p><p class="workflow-note">船型与载重率影响油耗；额定载重吨位仍在下方决策台调整。系数为演示假设，未按真实船型标定。</p></section><section id="arrival-fields"><h2>02 / 设置到港要求</h2><div class="workflow-fields"><label>出发后最晚到港（小时）<input id="arrival-deadline" type="number" min="1" max="1000" step="0.1" placeholder="留空表示不限"></label><label>到港口径<select id="arrival-basis"><option value="port">抵达目的港（不含候泊）</option><option value="berth">可开始靠泊（含候泊）</option></select></label><label>燃油 + 碳成本上限（USD）<input id="voyage-budget" type="number" min="1" max="10000000" step="1" placeholder="可选，留空表示不限"></label></div><p class="workflow-note">所有策略采用相同出发时间与约束。筛选合格方案后按成本推荐；无合格方案时保留比较并说明原因。</p></section></div><div class="workflow-actions"><button class="button primary" id="workflow-generate">生成并推荐方案</button><button class="button secondary" id="workflow-demo">载入推荐变化示例</button><button class="button secondary" id="workflow-season">切换冬夏海况并重新比较</button></div><p class="workflow-pending" id="workflow-pending" role="status"></p></article>`);
+  $('strategy-panel').insertAdjacentHTML('afterend','<article class="panel workflow-recommendation" id="workflow-recommendation"><h2>05 / 推荐结论与变化</h2><div id="workflow-verdict" class="workflow-verdict" aria-live="polite"></div><div class="workflow-actions"><button class="button secondary" id="workflow-adopt">采用推荐方案</button></div><p class="workflow-note">表格可横向滑动，查看成本与约束判断。</p><div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>方案</th><th>到港 / 可靠泊</th><th>成本</th><th>约束判断</th></tr></thead><tbody id="workflow-rows"></tbody></table></div><div class="workflow-change" id="workflow-change"></div></article>');
+  document.querySelectorAll('[data-workflow-target]').forEach(b=>b.onclick=()=>$(b.dataset.workflowTarget).scrollIntoView({behavior:'smooth',block:'start'}));
+  for(const id of ['ship-type','ship-load','arrival-deadline','arrival-basis','voyage-budget'])$(id).addEventListener('input',()=>{updateShipNote();markStale();});
+  $('workflow-generate').onclick=async()=>{if(tourRunning)stopTour(false);const r=await generate();if(r)$('workflow-recommendation').scrollIntoView({behavior:'smooth',block:'start'});};
+  $('workflow-adopt').onclick=()=>{if(!busy&&!environmentLoading&&!decisionStale()&&currentResult?.recommended)selectPlan(currentResult.recommended);};
+  $('workflow-demo').onclick=loadWorkflowExample;
+  $('workflow-season').onclick=async()=>{if(busy||environmentLoading)return;if(tourRunning)stopTour(false);restoreEnvironment(MarineEnvironment.seasonal(selectedEnvironment.kind==='seasonal'&&selectedEnvironment.month===7?1:7));environmentMessage='已切换冬夏季节估算，正在比较同一要求下的方案。';markStale();const r=await generate();if(r)$('workflow-recommendation').scrollIntoView({behavior:'smooth',block:'start'});};
+  updateShipNote();
+}
+function workflowParams(){const number=id=>$(id).value===''?null:Number($(id).value);return {shipType:$('ship-type').value,load:number('ship-load'),deadline:number('arrival-deadline'),arrivalBasis:$('arrival-basis').value,budget:number('voyage-budget')};}
+function setWorkflowForm(raw){const p=VoyageWorkflow.normalize(raw);$('ship-type').value=p.shipType;$('ship-load').value=p.load;$('arrival-deadline').value=p.deadline??'';$('arrival-basis').value=p.arrivalBasis;$('voyage-budget').value=p.budget??'';updateShipNote();}
+function updateShipNote(){if(!$('ship-profile-note'))return;const ship=VoyageWorkflow.ships[$('ship-type').value];$('ship-profile-note').textContent=ship.description+'；载重修正 = 0.55 + 0.45 × 载重率。';}
+function workflowValid(){return [...document.querySelectorAll('.workflow-fields input')].every(input=>input.reportValidity());}
+function requirementText(plan){const q=plan.requirements,reasons=[];if(q.late>1e-8)reasons.push('超时 '+fmt(q.late,2)+' h');if(q.over>1e-6)reasons.push('超预算 $'+fmt(q.over,2));if(q.wind)reasons.push('未满足 10 nm 模拟风区间距');return reasons.length?reasons.join('；'):'满足当前要求';}
+function recommendationName(r){return r.recommended?STRATEGIES[r.recommended].name:'无合格方案';}
+function chooseRecommendedResult(r){if(r.recommended){r.planId=r.recommended;r.optimized=r.alternatives[r.planId];for(const k of ['fuel','co2','cost','hours','distance'])r.saved[k]=r.baseline[k]-r.optimized[k];r.reduction=r.saved.co2/r.baseline.co2*100;}return r;}
+function captureWorkflowChange(r,previous){
+  if(!previous||previous.id===r.id||r.comparison)return;
+  if(JSON.stringify(previous.params)!==JSON.stringify(r.params)||JSON.stringify(previous.config)!==JSON.stringify(r.config))return;
+  if(JSON.stringify(previous.environment)===JSON.stringify(r.environment)&&previous.event===r.event)return;
+  r.comparison={environment:previous.environment,event:previous.event,sourcePlanId:previous.sourcePlanId};
+}
+function previousWorkflowResult(r){const c=r.comparison;if(!c||!MarineEnvironment.valid(c.environment)||!Object.hasOwn(EVENTS,c.event)||!Object.hasOwn(STRATEGIES,c.sourcePlanId))return null;return calculate(r.params,r.config,'eco',c.event,c.sourcePlanId,c.environment);}
+function validWorkflowComparison(c){return c&&MarineEnvironment.valid(c.environment)&&Object.hasOwn(EVENTS,c.event)&&Object.hasOwn(STRATEGIES,c.sourcePlanId);}
+function renderWorkflow(r){
+  if(!$('workflow-panel')||!r)return;
+  const stale=decisionStale(),pending=environmentLoading?'正在获取海况…':busy?'正在计算并筛选方案…':stale?'输入已改变，点击“生成并推荐方案”更新。下方仍为上次结果。':'结果已更新。可以改变环境，再比较推荐结论。';
+  $('workflow-pending').textContent=pending;
+  document.querySelectorAll('.workflow-fields input,.workflow-fields select,#workflow-generate,#workflow-demo,#workflow-season').forEach(el=>el.disabled=busy||environmentLoading);
+  const verdict=$('workflow-verdict');verdict.replaceChildren();verdict.classList.toggle('unavailable',!r.recommended);
+  const title=document.createElement('strong');title.textContent=r.recommended?'推荐 '+recommendationName(r):'没有同时满足要求的方案';verdict.append(title);
+  const note=document.createElement('div');note.textContent=VoyageWorkflow.ships[r.params.shipType].name+' · '+fmt(r.params.load)+'% 载重；'+(r.params.deadline===null?'不限制到港时间':fmt(r.params.deadline,1)+' h 内'+(r.params.arrivalBasis==='berth'?'可靠泊':'到港'))+'；'+(r.params.budget===null?'不限制预算':'预算 $'+fmt(r.params.budget))+'。'+(r.recommended?'推荐所有合格策略中燃油与碳成本最低者。':'请放宽期限、预算或调整航线，以下仅供比较。')+' 当前查看：'+r.optimized.name+'。';verdict.append(note);
+  const adopt=$('workflow-adopt');adopt.hidden=!r.recommended||r.planId===r.recommended;adopt.disabled=busy||environmentLoading||stale;
+  $('workflow-rows').innerHTML=Object.values(r.alternatives).map(p=>'<tr><td>'+p.name+(r.recommended===p.id?' · 推荐':'')+'</td><td>'+fmt(p.sailingHours,2)+' / '+fmt(p.hours,2)+' h</td><td>$'+fmt(p.cost,2)+'</td><td class="'+(p.requirements.feasible?'pass':'fail')+'">'+requirementText(p)+'</td></tr>').join('');
+  const change=$('workflow-change');change.replaceChildren();const heading=document.createElement('h3');heading.textContent='同一船舶与要求下，环境改变了什么？';change.append(heading);
+  const before=previousWorkflowResult(r);const text=document.createElement('p');
+  if(before){text.textContent=recommendationName(before)+' → '+recommendationName(r)+'。'+MarineEnvironment.describe(before.environment)+' / '+EVENTS[before.event].name+' → '+MarineEnvironment.describe(r.environment)+' / '+EVENTS[r.event].name+'。';change.append(text);
+    for(const id of Object.keys(STRATEGIES)){const a=before.alternatives[id],b=r.alternatives[id],line=document.createElement('p');line.textContent=b.name+'：到港 '+fmt(a.sailingHours,2)+' → '+fmt(b.sailingHours,2)+' h；可靠泊 '+fmt(a.hours,2)+' → '+fmt(b.hours,2)+' h；成本 $'+fmt(a.cost)+' → $'+fmt(b.cost)+'。'+requirementText(a)+' → '+requirementText(b);change.append(line);}
+  }else{text.textContent='改变月份、更新公开海况或应用事件后再比较。只在船舶、航线、要求和价格相同的情况下展示环境前后差异。';change.append(text);}
+  document.querySelectorAll('[data-plan]').forEach(button=>{const p=r.alternatives[button.dataset.plan],note=document.createElement('div');note.className='requirement-note'+(p.requirements.feasible?'':' fail');note.textContent=requirementText(p);button.querySelector('.requirement-note')?.remove();button.append(note);});
+}
+async function loadWorkflowExample(){
+  if(busy||environmentLoading)return;if(tourRunning)stopTour(false);
+  const p=VoyageWorkflow.normalize({start:'Shanghai',end:'Singapore',speed:18,dwt:50000,storm:true,current:true,shipType:'container',load:80});
+  const a=calculate(p,config,'eco','none','eco',MarineEnvironment.seasonal(1)),b=calculate(p,config,'eco','none','eco',MarineEnvironment.seasonal(7));
+  p.deadline=Math.round((a.alternatives.eco.sailingHours+b.alternatives.eco.sailingHours)*5)/10;
+  setForm(p);restoreEnvironment(MarineEnvironment.seasonal(a.alternatives.eco.sailingHours<b.alternatives.eco.sailingHours?1:7));
+  environmentMessage='示例按冬夏经济方案航时中点设置期限；点击“切换冬夏海况并重新比较”观察变化。';markStale();
+  const r=await generate();if(r)$('workflow-recommendation').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function workflowReportRows(r){const rows=[[],['船舶与业务要求'],['船型',VoyageWorkflow.ships[r.params.shipType].name],['载重率 %',r.params.load],['船型系数（演示假设）',VoyageWorkflow.ships[r.params.shipType].factor],['船型与载重综合油耗系数',VoyageWorkflow.burnFactor(r.params)],['到港期限 h',r.params.deadline??'不限'],['期限口径',r.params.arrivalBasis==='berth'?'可靠泊（含候泊）':'到港（不含候泊）'],['预算 USD',r.params.budget??'不限'],['推荐方案',recommendationName(r)],['方案','到港 h','可靠泊 h','成本 USD','约束判断'],...Object.values(r.alternatives).map(p=>[p.name,p.sailingHours,p.hours,p.cost,requirementText(p)])];const before=previousWorkflowResult(r);if(before){rows.push([],['环境变化前推荐',recommendationName(before)],['变化前环境',MarineEnvironment.describe(before.environment)],['变化前事件',EVENTS[before.event].name],['变化后推荐',recommendationName(r)],['变化后事件',EVENTS[r.event].name],['方案','原到港 h','新到港 h','原成本 USD','新成本 USD'],...Object.keys(STRATEGIES).map(id=>[STRATEGIES[id].name,before.alternatives[id].sailingHours,r.alternatives[id].sailingHours,before.alternatives[id].cost,r.alternatives[id].cost]));}return rows;}
