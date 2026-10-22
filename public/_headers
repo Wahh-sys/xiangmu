@@ -1,0 +1,63 @@
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: same-origin
+/assets/map-data.v1.js
+  Cache-Control: public, max-age=31536000, immutable
+/*.html
+  Cache-Control: no-store
+/login
+  Cache-Control: no-store
+/
+  Cache-Control: no-store
+
+/app.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/archive.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/decision.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/decision.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/environment-ui.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/environment.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/environment.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/experience.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/experience.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/workflow-ui.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/workflow.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/workflow.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/auth.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/login.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/login.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/marine.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/styles.css
+  Cache-Control: public, max-age=0, must-revalidate

@@ -1,0 +1,17 @@
+{
+  "name": "ecovoyager-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "deploy": "wrangler pages deploy public",
+    "dev:cloudflare": "wrangler pages dev public",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
