@@ -1,3 +1,0 @@
-# Copy to .dev.vars for local development only.
-# Replace this placeholder with at least 32 random characters.
-SESSION_SECRET="REPLACE_WITH_RANDOM_SECRET"
